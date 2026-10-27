@@ -1,0 +1,132 @@
+name: Android CI Build & Artifact Pipeline
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build APK, JARs & Run Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+
+      - name: Prepare Build Environment & Keystore
+        run: |
+          echo "Setting up .env file..."
+          if [ -f ".env.example" ] && [ ! -f ".env" ]; then
+            cp .env.example .env
+          else
+            touch .env
+          fi
+
+          echo "Restoring debug.keystore if available..."
+          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          elif [ ! -f "debug.keystore" ]; then
+            # Generate temporary fallback debug keystore if not present
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Ensure Gradle Wrapper Executable
+        run: |
+          if [ ! -f "./gradlew" ]; then
+            echo "Generating Gradle wrapper..."
+            gradle wrapper --gradle-version 9.3.1 || gradle wrapper
+          fi
+          chmod +x ./gradlew
+
+      - name: Run Unit & Robolectric Tests
+        run: ./gradlew testDebugUnitTest --continue --stacktrace
+
+      - name: Upload Test Results & Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+          retention-days: 7
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Verify & Package Output APK
+        id: verify-apk
+        run: |
+          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
+          if [ -f "$APK_PATH" ]; then
+            echo "APK generated successfully at: $APK_PATH"
+            ls -lh "$APK_PATH"
+            echo "apk_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Error: APK was not found at $APK_PATH"
+            exit 1
+          fi
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-collab-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Compile & Package Application JARs
+        run: |
+          echo "Compiling and packaging classes JAR..."
+          ./gradlew :app:bundleDebugClassesToCompileJar :app:bundleDebugClassesToRuntimeJar --stacktrace || true
+
+          mkdir -p output-jars
+
+          # Collect compiled application classes JAR
+          if [ -d "app/build/intermediates/compile_app_classes_jar/debug" ]; then
+            find app/build/intermediates/compile_app_classes_jar/debug -name "*.jar" -exec cp {} output-jars/app-classes-debug.jar \;
+          fi
+
+          # Collect runtime classes JAR
+          if [ -d "app/build/intermediates/runtime_app_classes_jar/debug" ]; then
+            find app/build/intermediates/runtime_app_classes_jar/debug -name "*.jar" -exec cp {} output-jars/app-runtime-debug.jar \;
+          fi
+
+          # Collect R resource classes JAR
+          if [ -d "app/build/intermediates/compile_and_runtime_r_class_jar/debug" ]; then
+            find app/build/intermediates/compile_and_runtime_r_class_jar/debug -name "*.jar" -exec cp {} output-jars/app-r-classes.jar \;
+          fi
+
+          # Collect any additional built library / intermediate JARs
+          find app/build/intermediates -type f -name "*.jar" -exec cp -u {} output-jars/ \; || true
+
+          echo "Collected JAR files in output-jars/:"
+          ls -lh output-jars/
+
+      - name: Upload Compiled JAR Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-collab-compiled-jars
+          path: output-jars/*.jar
+          if-no-files-found: warn
+          retention-days: 14

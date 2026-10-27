@@ -75,3 +75,17 @@ gradle :app:assembleDebug
 ```bash
 gradle :app:testDebugUnitTest
 ```
+
+---
+
+## Continuous Integration & GitHub Actions
+
+The repository includes a ready-to-run GitHub Actions workflow at `.github/workflows/build.yml`.
+
+### What the Pipeline Does:
+1. **Environment Setup:** Configures JDK 21 (`temurin`) and Gradle caching (`gradle/actions/setup-gradle@v4`).
+2. **Keystore & Config:** Restores `debug.keystore` from `debug.keystore.base64` and generates `.env` from `.env.example`.
+3. **Automated Testing:** Runs all unit and Robolectric tests (`./gradlew testDebugUnitTest`) and uploads test reports.
+4. **APK Compilation:** Compiles the installable debug APK (`./gradlew assembleDebug`) and publishes it as the artifact `ai-collab-debug-apk`.
+5. **JAR Packaging:** Bundles and collects compiled application classes, runtime classes, and R resource JARs into `output-jars/` and publishes them as `ai-collab-compiled-jars`.
+
