@@ -1,0 +1,6 @@
+{
+  "name": "AI Collab Workspace",
+  "description": "Multi-AI collaboration workspace connecting Gemini, OpenAI, and Anthropic with shared chat, agent-to-agent reviews, tool execution, and live artifact management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
