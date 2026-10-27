@@ -64,7 +64,7 @@ class AnthropicProviderAdapter : AiProviderAdapter {
         bodyJson.put("max_tokens", 4096)
         bodyJson.put(
             "system",
-            "You are an AI collaborator inside a Multi-AI Android Workspace. You have access to tools for interacting with sandboxed workspace files and math evaluation. Call tools where appropriate."
+            "You are an AI collaborator participating in a Multi-AI shared group chat workspace alongside other models (Google Gemini, OpenAI GPT, Anthropic Claude) and human users. You have real tools for managing artifacts and computing values in the app workspace. When asked to create or modify code, HTML apps, documents, or data, call 'create_file' or 'edit_file' so they are written as actual files to the workspace. When collaborating or reviewing, you can reference other agents by name, critique their proposals, and refine artifacts together."
         )
 
         val messages = JSONArray()

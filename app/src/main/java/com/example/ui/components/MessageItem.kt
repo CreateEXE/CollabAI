@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,15 +24,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,11 +61,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.AiProvider
 import com.example.data.model.ChatMessage
 import com.example.data.model.MessageRecipientType
 import com.example.data.model.MessageStatus
 import com.example.data.model.SenderType
 import com.example.data.model.ToolCallRecord
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -67,6 +77,8 @@ fun MessageItem(
     message: ChatMessage,
     onRequestCritique: (ChatMessage) -> Unit,
     onRetry: (ChatMessage) -> Unit,
+    onOpenArtifact: (String) -> Unit = {},
+    onReplyWithAgent: (ChatMessage, AiProvider) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -91,6 +103,23 @@ fun MessageItem(
         val sdf = SimpleDateFormat("h:mm a", Locale.getDefault())
         sdf.format(Date(message.timestamp))
     }
+
+    // Inspect tool calls for created/modified artifacts
+    val createdArtifacts = remember(message.toolCalls) {
+        message.toolCalls.mapNotNull { tc ->
+            if (tc.toolName == "create_file" || tc.toolName == "edit_file") {
+                try {
+                    val json = JSONObject(tc.argumentsJson)
+                    val path = json.optString("path", "")
+                    if (path.isNotBlank()) {
+                        Pair(path, tc.toolName == "create_file")
+                    } else null
+                } catch (_: Exception) { null }
+            } else null
+        }.distinctBy { it.first }
+    }
+
+    var showRouteMenu by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -172,21 +201,34 @@ fun MessageItem(
             )
         }
 
-        // In-Reply-To Banner
+        // In-Reply-To Banner (Agent-to-Agent Citation)
         if (message.inReplyToSender != null) {
             Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                shape = RoundedCornerShape(4.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                shape = RoundedCornerShape(6.dp),
+                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
                 modifier = Modifier
-                    .padding(bottom = 2.dp)
-                    .fillMaxWidth(0.9f)
+                    .padding(bottom = 3.dp)
+                    .fillMaxWidth(if (isSystem) 1.0f else 0.95f)
             ) {
-                Text(
-                    text = "In review of: ${message.inReplyToSender}'s output",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QuestionAnswer,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Responding directly to ${message.inReplyToSender}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
 
@@ -206,6 +248,62 @@ fun MessageItem(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                }
+
+                // Interactive Artifact Cards (if this message generated or modified files)
+                if (createdArtifacts.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    createdArtifacts.forEach { (path, isNew) ->
+                        val isHtml = path.endsWith(".html", ignoreCase = true) || path.endsWith(".htm", ignoreCase = true)
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = if (isHtml) Icons.Default.Language else Icons.Default.Code,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = path.substringAfterLast('/'),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = if (isNew) "Artifact generated in workspace" else "Artifact modified in workspace",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                                Button(
+                                    onClick = { onOpenArtifact(path) },
+                                    modifier = Modifier.height(28.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    Text(if (isHtml) "Live Preview" else "Open Editor", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // In Progress Spinner
@@ -343,9 +441,61 @@ fun MessageItem(
                             )
                         }
 
-                        // Request Review button (for completed agent messages)
+                        // Agent-to-Agent Actions (for completed agent messages)
                         if (message.sender.type == SenderType.AI_PROVIDER && message.status == MessageStatus.COMPLETED) {
                             Spacer(modifier = Modifier.width(4.dp))
+
+                            // Route / Reply With Agent Dropdown
+                            val otherProviders = AiProvider.entries.filter { it != provider }
+                            if (otherProviders.isNotEmpty()) {
+                                Box {
+                                    OutlinedButton(
+                                        onClick = { showRouteMenu = true },
+                                        modifier = Modifier.height(28.dp).testTag("route_to_agent_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.QuestionAnswer,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Ask Agent...", fontSize = 11.sp)
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = showRouteMenu,
+                                        onDismissRequest = { showRouteMenu = false }
+                                    ) {
+                                        otherProviders.forEach { targetProv ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(8.dp)
+                                                                .clip(CircleShape)
+                                                                .background(targetProv.brandColor)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text(
+                                                            text = "Ask ${targetProv.displayName} to reply",
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Medium
+                                                        )
+                                                    }
+                                                },
+                                                onClick = {
+                                                    showRouteMenu = false
+                                                    onReplyWithAgent(message, targetProv)
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                            }
+
+                            // Review button
                             OutlinedButton(
                                 onClick = { onRequestCritique(message) },
                                 modifier = Modifier.height(28.dp).testTag("request_critique_button")
@@ -373,7 +523,7 @@ private fun ToolCallsContainer(tools: List<ToolCallRecord>) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(8.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(6.dp)) {

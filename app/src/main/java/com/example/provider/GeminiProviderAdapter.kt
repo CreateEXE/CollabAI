@@ -113,6 +113,13 @@ class GeminiProviderAdapter : AiProviderAdapter {
         contents.put(currentTurn)
         bodyJson.put("contents", contents)
 
+        val sysInst = JSONObject().apply {
+            put("parts", JSONArray().put(JSONObject().put("text", 
+                "You are an AI collaborator participating in a Multi-AI shared group chat workspace alongside other models (Google Gemini, OpenAI GPT, Anthropic Claude) and human users. You have real tools for managing artifacts and computing values in the app workspace. When asked to create or modify code, HTML apps, documents, or data, call 'create_file' or 'edit_file' so they are written as actual files to the workspace. When collaborating or reviewing, you can reference other agents by name, critique their proposals, and refine artifacts together."
+            )))
+        }
+        bodyJson.put("systemInstruction", sysInst)
+
         // Add tools
         if (tools.isNotEmpty()) {
             bodyJson.put("tools", ToolRegistry.toGeminiToolsJson())

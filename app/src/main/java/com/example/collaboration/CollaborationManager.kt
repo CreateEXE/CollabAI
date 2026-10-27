@@ -160,15 +160,130 @@ class CollaborationManager(
     }
 
     fun startReviewRound(config: ReviewRoundConfig, initialTask: String) {
-        // Step 1: Send initial task to primary agent
-        sendMessage(initialTask, MessageRecipient.to(config.primaryAgent))
+        val trimmed = initialTask.trim()
+        if (trimmed.isEmpty()) return
+
+        val userMsg = ChatMessage(
+            sender = MessageSender.USER,
+            recipient = MessageRecipient.to(config.primaryAgent),
+            content = "Collaborative Task: $trimmed\nFocus: ${config.reviewFocus}",
+            status = MessageStatus.COMPLETED
+        )
+
+        val systemNotice = ChatMessage(
+            sender = MessageSender.SYSTEM,
+            recipient = MessageRecipient.ALL,
+            content = "🚀 Multi-Agent Collaboration Round: ${config.primaryAgent.displayName} ⇄ ${config.reviewerAgent.displayName} (${config.maxPasses} pass${if (config.maxPasses > 1) "es" else ""})\nTopic: $trimmed",
+            status = MessageStatus.COMPLETED
+        )
+
+        val updatedList = _messages.value + userMsg + systemNotice
+        _messages.value = updatedList
+        appPreferences.saveMessages(updatedList)
+
+        // Step 1: Dispatch Primary Agent
+        val primaryPrompt = "User Task: $trimmed\nFocus: ${config.reviewFocus}\nPlease produce the initial solution or create the necessary workspace artifact files using your tools."
+        dispatchAgentCall(
+            provider = config.primaryAgent,
+            prompt = primaryPrompt,
+            replyTo = null,
+            isCritique = false,
+            onSuccess = { primaryMsg ->
+                // Step 2: Dispatch Reviewer Agent to review Primary Agent's work
+                val reviewerPrompt = """
+                    Please review the solution and artifacts produced by ${config.primaryAgent.displayName}:
+                    ---
+                    ${primaryMsg.content}
+                    ---
+                    Review Focus: ${config.reviewFocus}
+                    Please evaluate their work, inspect any created workspace files, communicate your feedback directly to ${config.primaryAgent.displayName}, and use workspace tools to propose improvements or refine the artifacts.
+                """.trimIndent()
+
+                dispatchAgentCall(
+                    provider = config.reviewerAgent,
+                    prompt = reviewerPrompt,
+                    replyTo = primaryMsg,
+                    isCritique = true,
+                    onSuccess = { reviewerMsg ->
+                        if (config.maxPasses > 1) {
+                            // Step 3: Final refinement pass from Primary Agent responding to Reviewer
+                            val followUpPrompt = """
+                                ${config.reviewerAgent.displayName} reviewed your work with the following feedback:
+                                ---
+                                ${reviewerMsg.content}
+                                ---
+                                Please provide final adjustments, address their critique, and update any workspace artifacts as needed.
+                            """.trimIndent()
+
+                            dispatchAgentCall(
+                                provider = config.primaryAgent,
+                                prompt = followUpPrompt,
+                                replyTo = reviewerMsg,
+                                isCritique = false,
+                                onSuccess = {
+                                    val doneMsg = ChatMessage(
+                                        sender = MessageSender.SYSTEM,
+                                        recipient = MessageRecipient.ALL,
+                                        content = "✅ Multi-Agent Collaboration Round completed successfully.",
+                                        status = MessageStatus.COMPLETED
+                                    )
+                                    _messages.value = _messages.value + doneMsg
+                                    appPreferences.saveMessages(_messages.value)
+                                }
+                            )
+                        } else {
+                            val doneMsg = ChatMessage(
+                                sender = MessageSender.SYSTEM,
+                                recipient = MessageRecipient.ALL,
+                                content = "✅ Multi-Agent Collaboration Round completed.",
+                                status = MessageStatus.COMPLETED
+                            )
+                            _messages.value = _messages.value + doneMsg
+                            appPreferences.saveMessages(_messages.value)
+                        }
+                    }
+                )
+            }
+        )
+    }
+
+    fun replyToAgent(targetMessage: ChatMessage, respondingProvider: AiProvider, customPrompt: String = "") {
+        val userPrompt = if (customPrompt.isNotBlank()) customPrompt else "Please reply to ${targetMessage.sender.displayName}'s message above, collaborate on their ideas, and refine any workspace artifacts."
+        val promptForAgent = """
+            Message from ${targetMessage.sender.displayName}:
+            ---
+            ${targetMessage.content}
+            ---
+            Instruction: $userPrompt
+        """.trimIndent()
+
+        val userPromptMsg = ChatMessage(
+            sender = MessageSender.USER,
+            recipient = MessageRecipient.to(respondingProvider),
+            content = "Prompt to ${respondingProvider.displayName}: $userPrompt",
+            status = MessageStatus.COMPLETED,
+            inReplyToId = targetMessage.id,
+            inReplyToSender = targetMessage.sender.displayName
+        )
+
+        val updated = _messages.value + userPromptMsg
+        _messages.value = updated
+        appPreferences.saveMessages(updated)
+
+        dispatchAgentCall(
+            provider = respondingProvider,
+            prompt = promptForAgent,
+            replyTo = targetMessage,
+            isCritique = false
+        )
     }
 
     private fun dispatchAgentCall(
         provider: AiProvider,
         prompt: String,
         replyTo: ChatMessage? = null,
-        isCritique: Boolean = false
+        isCritique: Boolean = false,
+        onSuccess: ((ChatMessage) -> Unit)? = null
     ) {
         val apiKey = keystoreManager.getApiKey(provider)
         val config = _providerConfigs.value[provider] ?: ProviderConfig(provider)
@@ -224,16 +339,20 @@ class CollaborationManager(
                         initialText = response.text,
                         toolCalls = response.toolCalls,
                         apiKey = apiKey,
-                        model = config.selectedModel
+                        model = config.selectedModel,
+                        onSuccess = onSuccess
                     )
                 } else {
-                    updateMessage(placeholderId) {
+                    val completed = updateMessage(placeholderId) {
                         it.copy(
                             content = response.text,
                             status = MessageStatus.COMPLETED,
                             tokenUsage = response.tokenUsage,
                             modelUsed = response.modelUsed
                         )
+                    }
+                    if (completed != null) {
+                        onSuccess?.invoke(completed)
                     }
                 }
             } catch (ce: CancellationException) {
@@ -272,7 +391,8 @@ class CollaborationManager(
         initialText: String,
         toolCalls: List<ToolExecutionRequest>,
         apiKey: String,
-        model: String
+        model: String,
+        onSuccess: ((ChatMessage) -> Unit)? = null
     ) {
         val toolRecords = toolCalls.map { tc ->
             ToolCallRecord(
@@ -349,12 +469,15 @@ class CollaborationManager(
             }
         }
 
-        updateMessage(messageId) {
+        val completed = updateMessage(messageId) {
             it.copy(
                 content = currentText,
                 status = MessageStatus.COMPLETED,
                 toolCalls = finalToolRecords
             )
+        }
+        if (completed != null) {
+            onSuccess?.invoke(completed)
         }
     }
 
@@ -407,15 +530,18 @@ class CollaborationManager(
         appPreferences.saveMessages(_messages.value)
     }
 
-    private fun updateMessage(id: String, transform: (ChatMessage) -> ChatMessage) {
+    private fun updateMessage(id: String, transform: (ChatMessage) -> ChatMessage): ChatMessage? {
         val current = _messages.value
         val index = current.indexOfFirst { it.id == id }
         if (index != -1) {
             val updated = current.toMutableList()
-            updated[index] = transform(current[index])
+            val newMsg = transform(current[index])
+            updated[index] = newMsg
             _messages.value = updated
             appPreferences.saveMessages(updated)
+            return newMsg
         }
+        return null
     }
 
     companion object {

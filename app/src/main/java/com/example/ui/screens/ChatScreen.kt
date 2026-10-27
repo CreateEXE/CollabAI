@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,9 +13,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GroupWork
 import androidx.compose.material.icons.filled.RateReview
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +36,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.AiProvider
 import com.example.data.model.ChatMessage
 import com.example.ui.WorkspaceViewModel
 import com.example.ui.components.ComposerBar
@@ -105,6 +109,44 @@ fun ChatScreen(
                 }
             }
 
+            // Quick Tool & Multi-Agent Starters
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AssistChip(
+                    onClick = {
+                        viewModel.sendMessage("Create an interactive HTML artifact named app.html with a modern dashboard, responsive CSS styling, and a JavaScript counter widget using the create_file tool.")
+                    },
+                    label = { Text("🌐 Generate HTML App", fontSize = 11.sp) },
+                    modifier = Modifier.padding(end = 6.dp)
+                )
+                AssistChip(
+                    onClick = {
+                        val last = messages.lastOrNull { it.sender.provider != null } ?: messages.firstOrNull()
+                        if (last != null) reviewTargetMessage = last
+                    },
+                    label = { Text("🤝 Multi-Agent Round", fontSize = 11.sp) },
+                    modifier = Modifier.padding(end = 6.dp)
+                )
+                AssistChip(
+                    onClick = {
+                        viewModel.sendMessage("Use the list_files and search_files tools to find and summarize all files in our workspace.")
+                    },
+                    label = { Text("🔍 Search Files", fontSize = 11.sp) },
+                    modifier = Modifier.padding(end = 6.dp)
+                )
+                AssistChip(
+                    onClick = {
+                        viewModel.sendMessage("Calculate 128 * 4 + 2^5 using the calculate_expression tool and validate this JSON config with validate_json_or_config: {\"status\": \"active\", \"version\": 1.0}")
+                    },
+                    label = { Text("🧮 Math & Config Tools", fontSize = 11.sp) }
+                )
+            }
+
             // Chat Messages Timeline
             LazyColumn(
                 state = listState,
@@ -117,7 +159,11 @@ fun ChatScreen(
                     MessageItem(
                         message = message,
                         onRequestCritique = { target -> reviewTargetMessage = target },
-                        onRetry = { retryTarget -> viewModel.retryMessage(retryTarget) }
+                        onRetry = { retryTarget -> viewModel.retryMessage(retryTarget) },
+                        onOpenArtifact = { relativePath -> viewModel.openArtifact(relativePath) },
+                        onReplyWithAgent = { targetMsg, respondingProv ->
+                            viewModel.replyToAgent(targetMsg, respondingProv)
+                        }
                     )
                 }
             }
@@ -150,8 +196,14 @@ fun ChatScreen(
                 onDismiss = { reviewTargetMessage = null },
                 onStartReview = { reviewer, maxPasses, focusPrompt ->
                     val target = reviewTargetMessage!!
+                    val primary = target.sender.provider ?: AiProvider.GEMINI
                     reviewTargetMessage = null
-                    viewModel.requestCritique(target, reviewer)
+                    viewModel.startReviewRound(
+                        primary = primary,
+                        reviewer = reviewer,
+                        maxPasses = maxPasses,
+                        focus = focusPrompt
+                    )
                 }
             )
         }

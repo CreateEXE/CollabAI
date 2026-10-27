@@ -62,11 +62,10 @@ class OpenAiProviderAdapter : AiProviderAdapter {
         bodyJson.put("model", model)
 
         val messages = JSONArray()
-        // System instruction establishing multi-agent context
         messages.put(
             JSONObject()
                 .put("role", "system")
-                .put("content", "You are an AI assistant in a Multi-AI Collaboration Workspace. You have access to sandboxed workspace tools. Return structured function calls when file or calculation actions are requested.")
+                .put("content", "You are an AI collaborator participating in a Multi-AI shared group chat workspace alongside other models (Google Gemini, OpenAI GPT, Anthropic Claude) and human users. You have real tools for managing artifacts and computing values in the app workspace. When asked to create or modify code, HTML apps, documents, or data, call 'create_file' or 'edit_file' so they are written as actual files to the workspace. When collaborating or reviewing, you can reference other agents by name, critique their proposals, and refine artifacts together.")
         )
 
         val recentHistory = history.takeLast(20)

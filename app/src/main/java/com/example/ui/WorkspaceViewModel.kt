@@ -105,6 +105,23 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         collaborationManager.startReviewRound(config, focus)
     }
 
+    fun replyToAgent(targetMessage: ChatMessage, respondingProvider: AiProvider, customPrompt: String = "") {
+        collaborationManager.replyToAgent(targetMessage, respondingProvider, customPrompt)
+    }
+
+    fun openArtifact(relativePath: String) {
+        refreshArtifacts()
+        val cleanPath = relativePath.trim().replace("\\", "/").removePrefix("/")
+        val art = _artifacts.value.find { 
+            it.relativePath.equals(cleanPath, ignoreCase = true) || 
+            it.name.equals(cleanPath.substringAfterLast('/'), ignoreCase = true)
+        }
+        if (art != null) {
+            _selectedArtifact.value = art
+            _currentTab.value = WorkspaceTab.ARTIFACTS
+        }
+    }
+
     fun submitToolApproval(approved: Boolean) {
         collaborationManager.submitToolApproval(approved)
         refreshArtifacts()
