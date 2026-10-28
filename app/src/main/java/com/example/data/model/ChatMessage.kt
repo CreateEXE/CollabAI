@@ -87,5 +87,6 @@ data class ChatMessage(
     val inReplyToId: String? = null,
     val inReplyToSender: String? = null,
     val isCritique: Boolean = false,
+    val chatRoomId: String = "default_project_chat",
     val errorMessage: String? = null
 )

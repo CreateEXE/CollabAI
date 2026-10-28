@@ -9,6 +9,7 @@ import com.example.data.local.WorkspaceFileManager
 import com.example.data.model.AiProvider
 import com.example.data.model.Artifact
 import com.example.data.model.ChatMessage
+import com.example.data.model.ChatRoom
 import com.example.data.model.MessageRecipient
 import com.example.data.model.MessageSender
 import com.example.data.model.PendingToolApproval
@@ -42,7 +43,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         scope = viewModelScope
     )
 
-    val messages: StateFlow<List<ChatMessage>> = collaborationManager.messages
+    val messages: StateFlow<List<ChatMessage>> = collaborationManager.currentRoomMessages
+    val chatRooms: StateFlow<List<ChatRoom>> = collaborationManager.chatRooms
+    val activeChatRoom: StateFlow<ChatRoom> = collaborationManager.activeChatRoom
     val providerConfigs: StateFlow<Map<AiProvider, ProviderConfig>> = collaborationManager.providerConfigs
     val isGenerating: StateFlow<Boolean> = collaborationManager.isGenerating
     val pendingApproval: StateFlow<PendingToolApproval?> = collaborationManager.pendingApproval
@@ -94,6 +97,42 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun clearChat() {
         collaborationManager.clearChat()
+    }
+
+    fun createChatRoom(
+        title: String,
+        projectDetails: String,
+        systemInstructions: String,
+        participatingProviders: List<AiProvider>,
+        collaborationMode: com.example.data.model.CollaborationMode = com.example.data.model.CollaborationMode.SEQUENTIAL_RELAY,
+        responseOrder: List<AiProvider> = participatingProviders,
+        maxAutonomousTurns: Int = 3,
+        autoStopOnCompletionTag: Boolean = true,
+        isRoundtableEnabled: Boolean = true
+    ) {
+        collaborationManager.createChatRoom(
+            title = title,
+            projectDetails = projectDetails,
+            systemInstructions = systemInstructions,
+            participatingProviders = participatingProviders,
+            collaborationMode = collaborationMode,
+            responseOrder = responseOrder,
+            maxAutonomousTurns = maxAutonomousTurns,
+            autoStopOnCompletionTag = autoStopOnCompletionTag,
+            isRoundtableEnabled = isRoundtableEnabled
+        )
+    }
+
+    fun selectChatRoom(roomId: String) {
+        collaborationManager.selectChatRoom(roomId)
+    }
+
+    fun updateChatRoom(room: com.example.data.model.ChatRoom) {
+        collaborationManager.updateChatRoom(room)
+    }
+
+    fun deleteChatRoom(roomId: String) {
+        collaborationManager.deleteChatRoom(roomId)
     }
 
     fun requestCritique(message: ChatMessage, reviewer: AiProvider) {

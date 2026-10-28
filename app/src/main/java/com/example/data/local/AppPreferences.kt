@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.util.Log
 import com.example.data.model.AiProvider
 import com.example.data.model.ChatMessage
+import com.example.data.model.ChatRoom
 import com.example.data.model.MessageRecipient
 import com.example.data.model.MessageRecipientType
 import com.example.data.model.MessageSender
@@ -24,6 +25,7 @@ class AppPreferences(private val context: Context) {
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val messagesFile: File = File(context.filesDir, "chat_history.json")
+    private val roomsFile: File = File(context.filesDir, "chat_rooms.json")
 
     fun isOnline(): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
@@ -98,7 +100,6 @@ class AppPreferences(private val context: Context) {
         val newTotal = current.usage.totalTokens + tokens.totalTokens
         val newReq = current.usage.totalRequests + 1
 
-        // Rough cost estimation: ~$0.00000015 per token average across lightweight models
         val estCost = (newTotal * 0.00000020)
 
         val updated = current.copy(
@@ -113,6 +114,127 @@ class AppPreferences(private val context: Context) {
         saveProviderConfig(updated)
     }
 
+    fun getActiveChatRoomId(): String {
+        return prefs.getString("active_chat_room_id", ChatRoom.DEFAULT.id) ?: ChatRoom.DEFAULT.id
+    }
+
+    fun setActiveChatRoomId(id: String) {
+        prefs.edit().putString("active_chat_room_id", id).apply()
+    }
+
+    @Synchronized
+    fun saveChatRooms(rooms: List<ChatRoom>) {
+        try {
+            val root = JSONObject()
+            val arr = JSONArray()
+            rooms.forEach { room ->
+                val obj = JSONObject()
+                obj.put("id", room.id)
+                obj.put("title", room.title)
+                obj.put("projectDetails", room.projectDetails)
+                obj.put("systemInstructions", room.systemInstructions)
+                obj.put("isRoundtableEnabled", room.isRoundtableEnabled)
+                obj.put("createdAt", room.createdAt)
+                obj.put("updatedAt", room.updatedAt)
+
+                obj.put("collaborationMode", room.collaborationMode.name)
+                obj.put("maxAutonomousTurns", room.maxAutonomousTurns)
+                obj.put("autoStopOnCompletionTag", room.autoStopOnCompletionTag)
+
+                val orderArr = JSONArray()
+                room.responseOrder.forEach { orderArr.put(it.name) }
+                obj.put("responseOrder", orderArr)
+
+                val provArr = JSONArray()
+                room.participatingProviders.forEach { prov ->
+                    provArr.put(prov.name)
+                }
+                obj.put("participatingProviders", provArr)
+                arr.put(obj)
+            }
+            root.put("rooms", arr)
+            roomsFile.writeText(root.toString(2), Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save chat rooms", e)
+        }
+    }
+
+    fun loadChatRooms(): List<ChatRoom> {
+        if (!roomsFile.exists()) return listOf(ChatRoom.DEFAULT)
+        return try {
+            val content = roomsFile.readText(Charsets.UTF_8)
+            val root = JSONObject(content)
+            val arr = root.optJSONArray("rooms") ?: return listOf(ChatRoom.DEFAULT)
+            val list = mutableListOf<ChatRoom>()
+
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val id = obj.getString("id")
+                val title = obj.getString("title")
+                val details = obj.optString("projectDetails", "")
+                val instructions = obj.optString("systemInstructions", "")
+                val isRoundtable = obj.optBoolean("isRoundtableEnabled", true)
+                val maxTurns = obj.optInt("maxAutonomousTurns", 3)
+                val autoStop = obj.optBoolean("autoStopOnCompletionTag", true)
+                val mode = try {
+                    com.example.data.model.CollaborationMode.valueOf(obj.optString("collaborationMode", com.example.data.model.CollaborationMode.SEQUENTIAL_RELAY.name))
+                } catch (_: Exception) {
+                    com.example.data.model.CollaborationMode.SEQUENTIAL_RELAY
+                }
+                val createdAt = obj.optLong("createdAt", System.currentTimeMillis())
+                val updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
+
+                val provList = mutableListOf<AiProvider>()
+                val provArr = obj.optJSONArray("participatingProviders")
+                if (provArr != null) {
+                    for (j in 0 until provArr.length()) {
+                        val provName = provArr.getString(j)
+                        try {
+                            provList.add(AiProvider.valueOf(provName))
+                        } catch (_: Exception) {}
+                    }
+                }
+                if (provList.isEmpty()) {
+                    provList.addAll(listOf(AiProvider.GEMINI, AiProvider.GROQ))
+                }
+
+                val orderList = mutableListOf<AiProvider>()
+                val orderArr = obj.optJSONArray("responseOrder")
+                if (orderArr != null) {
+                    for (j in 0 until orderArr.length()) {
+                        try {
+                            orderList.add(AiProvider.valueOf(orderArr.getString(j)))
+                        } catch (_: Exception) {}
+                    }
+                }
+                if (orderList.isEmpty()) {
+                    orderList.addAll(provList)
+                }
+
+                list.add(
+                    ChatRoom(
+                        id = id,
+                        title = title,
+                        projectDetails = details,
+                        systemInstructions = instructions,
+                        participatingProviders = provList,
+                        collaborationMode = mode,
+                        responseOrder = orderList,
+                        maxAutonomousTurns = maxTurns,
+                        autoStopOnCompletionTag = autoStop,
+                        isRoundtableEnabled = isRoundtable,
+                        createdAt = createdAt,
+                        updatedAt = updatedAt
+                    )
+                )
+            }
+            if (list.isEmpty()) listOf(ChatRoom.DEFAULT) else list
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load chat rooms", e)
+            listOf(ChatRoom.DEFAULT)
+        }
+    }
+
     @Synchronized
     fun saveMessages(messages: List<ChatMessage>) {
         try {
@@ -121,6 +243,7 @@ class AppPreferences(private val context: Context) {
             messages.forEach { msg ->
                 val obj = JSONObject()
                 obj.put("id", msg.id)
+                obj.put("chatRoomId", msg.chatRoomId)
                 obj.put("senderType", msg.sender.type.name)
                 obj.put("senderProvider", msg.sender.provider?.name)
                 obj.put("senderCustomName", msg.sender.customName)
@@ -176,6 +299,7 @@ class AppPreferences(private val context: Context) {
 
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
+                val chatRoomId = obj.optString("chatRoomId", "default_project_chat")
                 val sType = SenderType.valueOf(obj.optString("senderType", SenderType.SYSTEM.name))
                 val sProv = obj.optString("senderProvider", null)?.let {
                     try { AiProvider.valueOf(it) } catch (_: Exception) { null }
@@ -227,6 +351,7 @@ class AppPreferences(private val context: Context) {
                 list.add(
                     ChatMessage(
                         id = obj.getString("id"),
+                        chatRoomId = chatRoomId,
                         sender = sender,
                         recipient = recipient,
                         content = obj.optString("content"),

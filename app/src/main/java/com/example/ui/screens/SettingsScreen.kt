@@ -287,7 +287,7 @@ private fun ProviderCard(
                 }
             }
 
-            // Connection Status Feedback
+            // Connection Status & Diagnostic Feedback
             Spacer(modifier = Modifier.height(6.dp))
             if (config.isConnected) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -300,21 +300,54 @@ private fun ProviderCard(
                     )
                 }
             } else if (config.lastError != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Connection test failed: ${config.lastError}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    val advice = when {
+                        config.lastError.contains("401", ignoreCase = true) -> "Check that your API key is copied correctly without extra spaces."
+                        config.lastError.contains("429", ignoreCase = true) -> "Rate limit hit. Wait a moment or check your free quota."
+                        config.lastError.contains("404", ignoreCase = true) -> "Model not supported. Select a different model above."
+                        else -> "Verify device network connectivity."
+                    }
                     Text(
-                        text = "Connection test failed: ${config.lastError}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error
+                        text = "Tip: $advice",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.padding(start = 18.dp, top = 2.dp)
                     )
                 }
             } else if (!hasKey) {
-                Text(
-                    text = if (provider == AiProvider.GEMINI) "Key required. Configure Gemini API key to activate." else "Optional provider. Enter key to connect.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (provider.isFreeTierAvailable) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                text = "FREE KEY AVAILABLE",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 9.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    Text(
+                        text = "Enter key to connect (${provider.freeKeyUrl.removePrefix("https://")})",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
             }
 
             // Token Usage & Spend Stats
@@ -382,6 +415,30 @@ private fun ApiKeyDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline
                 )
+                if (provider.isFreeTierAvailable) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text(
+                                text = "✨ Free API key available at:",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                text = provider.freeKeyUrl,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = keyInput,
@@ -391,8 +448,9 @@ private fun ApiKeyDialog(
                         Text(
                             when (provider) {
                                 AiProvider.GEMINI -> "AIzaSy..."
+                                AiProvider.GROQ -> "gsk_..."
+                                AiProvider.OPENROUTER -> "sk-or-v1-..."
                                 AiProvider.OPENAI -> "sk-..."
-                                AiProvider.ANTHROPIC -> "sk-ant-..."
                             }
                         )
                     },

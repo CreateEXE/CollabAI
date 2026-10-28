@@ -14,13 +14,24 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.GroupWork
 import androidx.compose.material.icons.filled.RateReview
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,8 +49,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.AiProvider
 import com.example.data.model.ChatMessage
+import com.example.data.model.ChatRoom
 import com.example.ui.WorkspaceViewModel
+import com.example.ui.components.ChatRulesDialog
 import com.example.ui.components.ComposerBar
+import com.example.ui.components.CreateRoomDialog
 import com.example.ui.components.MessageItem
 import com.example.ui.components.ReviewRoundDialog
 import com.example.ui.components.ToolApprovalDialog
@@ -50,12 +64,18 @@ fun ChatScreen(
     modifier: Modifier = Modifier
 ) {
     val messages by viewModel.messages.collectAsState()
+    val chatRooms by viewModel.chatRooms.collectAsState()
+    val activeRoom by viewModel.activeChatRoom.collectAsState()
     val providerConfigs by viewModel.providerConfigs.collectAsState()
     val isGenerating by viewModel.isGenerating.collectAsState()
     val selectedRecipient by viewModel.selectedRecipient.collectAsState()
     val pendingApproval by viewModel.pendingApproval.collectAsState()
 
     var reviewTargetMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var showCreateRoomDialog by remember { mutableStateOf(false) }
+    var showRulesDialog by remember { mutableStateOf(false) }
+    var roomMenuExpanded by remember { mutableStateOf(false) }
+
     val listState = rememberLazyListState()
 
     // Scroll to bottom on new message
@@ -67,43 +87,172 @@ fun ChatScreen(
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Workspace Header Bar
+            // Workspace Header Bar with Group Chat Switcher & Rules
             Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.GroupWork,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Multi-Agent Workspace",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
+                Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Room Selector Dropdown
+                        Box {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surface,
+                                modifier = Modifier
+                                    .clickable { roomMenuExpanded = true }
+                                    .testTag("room_selector_dropdown")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Forum,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = activeRoom.title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
 
-                    // Launch Review Round shortcut
-                    val lastAgentMsg = messages.lastOrNull { it.sender.provider != null }
-                    if (lastAgentMsg != null) {
-                        ElevatedButton(
-                            onClick = { reviewTargetMessage = lastAgentMsg },
-                            modifier = Modifier.testTag("launch_review_round_header_button")
+                            DropdownMenu(
+                                expanded = roomMenuExpanded,
+                                onDismissRequest = { roomMenuExpanded = false }
+                            ) {
+                                chatRooms.forEach { room ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column {
+                                                Text(room.title, fontWeight = if (room.id == activeRoom.id) FontWeight.Bold else FontWeight.Normal)
+                                                Text(
+                                                    "${room.collaborationMode.displayName} • ${room.participatingProviders.size} AIs",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontSize = 10.sp,
+                                                    color = MaterialTheme.colorScheme.outline
+                                                )
+                                            }
+                                        },
+                                        onClick = {
+                                            viewModel.selectChatRoom(room.id)
+                                            roomMenuExpanded = false
+                                        }
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("+ Create New Group Chat", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    },
+                                    onClick = {
+                                        roomMenuExpanded = false
+                                        showCreateRoomDialog = true
+                                    }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        // Rules Button
+                        OutlinedButton(
+                            onClick = { showRulesDialog = true },
+                            modifier = Modifier.testTag("open_chat_rules_button"),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.RateReview,
-                                contentDescription = null,
-                                modifier = Modifier.size(12.dp)
-                            )
+                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Agent Review", fontSize = 11.sp)
+                            Text("Rules & Order", fontSize = 11.sp)
+                        }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        // Launch Review Round shortcut
+                        val lastAgentMsg = messages.lastOrNull { it.sender.provider != null }
+                        if (lastAgentMsg != null) {
+                            ElevatedButton(
+                                onClick = { reviewTargetMessage = lastAgentMsg },
+                                modifier = Modifier.testTag("launch_review_round_header_button"),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.RateReview,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Review", fontSize = 11.sp)
+                            }
+                        }
+                    }
+
+                    // Room Subtitle Bar: Mode pill & participating AIs
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                text = when (activeRoom.collaborationMode) {
+                                    com.example.data.model.CollaborationMode.SEQUENTIAL_RELAY ->
+                                        "Relay: " + activeRoom.responseOrder.joinToString(" → ") { it.displayName }
+                                    com.example.data.model.CollaborationMode.AUTONOMOUS_COMPLETION ->
+                                        "Autonomous (max ${activeRoom.maxAutonomousTurns} turns)"
+                                    com.example.data.model.CollaborationMode.PARALLEL_BROADCAST ->
+                                        "Parallel Broadcast"
+                                    com.example.data.model.CollaborationMode.MANUAL_DIRECTED ->
+                                        "Manual Directed"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            activeRoom.participatingProviders.forEach { prov ->
+                                Surface(
+                                    color = prov.brandColor.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(3.dp),
+                                    modifier = Modifier.padding(end = 4.dp)
+                                ) {
+                                    Text(
+                                        text = prov.displayName,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontSize = 9.sp,
+                                        color = prov.brandColor,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -204,6 +353,40 @@ fun ChatScreen(
                         maxPasses = maxPasses,
                         focus = focusPrompt
                     )
+                }
+            )
+        }
+
+        // Create Room Dialog
+        if (showCreateRoomDialog) {
+            CreateRoomDialog(
+                onDismiss = { showCreateRoomDialog = false },
+                onCreate = { title, details, instructions, providers, mode ->
+                    showCreateRoomDialog = false
+                    viewModel.createChatRoom(
+                        title = title,
+                        projectDetails = details,
+                        systemInstructions = instructions,
+                        participatingProviders = providers,
+                        collaborationMode = mode
+                    )
+                }
+            )
+        }
+
+        // Room Rules & Response Order Dialog
+        if (showRulesDialog) {
+            ChatRulesDialog(
+                room = activeRoom,
+                canDelete = chatRooms.size > 1,
+                onDismiss = { showRulesDialog = false },
+                onSave = { updatedRoom ->
+                    showRulesDialog = false
+                    viewModel.updateChatRoom(updatedRoom)
+                },
+                onDelete = {
+                    showRulesDialog = false
+                    viewModel.deleteChatRoom(activeRoom.id)
                 }
             )
         }

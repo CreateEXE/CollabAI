@@ -88,5 +88,77 @@ class ExampleRobolectricTest {
         )
         val badResult = executor.execute(badJsonReq)
         assertFalse(badResult.isSuccess)
+
+        // Test calculate_expression
+        val mathReq = ToolExecutionRequest(
+            callId = "4",
+            toolName = "calculate_expression",
+            arguments = mapOf("expression" to "2 + 3 * 4")
+        )
+        val mathResult = executor.execute(mathReq)
+        assertTrue(mathResult.isSuccess)
+        assertTrue(mathResult.output.contains("14"))
+
+        // Test preview_diff
+        val diffReq = ToolExecutionRequest(
+            callId = "5",
+            toolName = "preview_diff",
+            arguments = mapOf(
+                "old_content" to "line 1\nline 2\n",
+                "new_content" to "line 1\nline 2 modified\nline 3\n"
+            )
+        )
+        val diffResult = executor.execute(diffReq)
+        assertTrue(diffResult.isSuccess)
+        assertTrue(diffResult.output.contains("+"))
+    }
+
+    @Test
+    fun chatRoomAndCollaborationModePersistence() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = com.example.data.local.AppPreferences(context)
+
+        val customRoom = com.example.data.model.ChatRoom(
+            id = "custom_test_room",
+            title = "Test Web Project",
+            projectDetails = "Build responsive canvas game",
+            systemInstructions = "Verify before committing",
+            participatingProviders = listOf(
+                com.example.data.model.AiProvider.GEMINI,
+                com.example.data.model.AiProvider.GROQ,
+                com.example.data.model.AiProvider.OPENROUTER
+            ),
+            collaborationMode = com.example.data.model.CollaborationMode.AUTONOMOUS_COMPLETION,
+            responseOrder = listOf(
+                com.example.data.model.AiProvider.GROQ,
+                com.example.data.model.AiProvider.GEMINI
+            ),
+            maxAutonomousTurns = 5,
+            autoStopOnCompletionTag = true
+        )
+
+        prefs.saveChatRooms(listOf(customRoom))
+        val loaded = prefs.loadChatRooms()
+        assertEquals(1, loaded.size)
+        val r = loaded[0]
+        assertEquals("Test Web Project", r.title)
+        assertEquals(com.example.data.model.CollaborationMode.AUTONOMOUS_COMPLETION, r.collaborationMode)
+        assertEquals(5, r.maxAutonomousTurns)
+        assertEquals(2, r.responseOrder.size)
+        assertEquals(com.example.data.model.AiProvider.GROQ, r.responseOrder[0])
+    }
+
+    @Test
+    fun freeAiProvidersConfiguredProperly() {
+        // Confirm free providers exist and have valid free key endpoints
+        val freeProviders = com.example.data.model.AiProvider.entries.filter { it.isFreeTierAvailable }
+        assertTrue(freeProviders.contains(com.example.data.model.AiProvider.GEMINI))
+        assertTrue(freeProviders.contains(com.example.data.model.AiProvider.GROQ))
+        assertTrue(freeProviders.contains(com.example.data.model.AiProvider.OPENROUTER))
+
+        for (provider in freeProviders) {
+            assertTrue(provider.freeKeyUrl.startsWith("https://"))
+            assertTrue(provider.availableModels.isNotEmpty())
+        }
     }
 }

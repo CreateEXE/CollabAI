@@ -14,24 +14,23 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 
-class AnthropicProviderAdapter : AiProviderAdapter {
+class GroqProviderAdapter : AiProviderAdapter {
 
     override suspend fun testConnection(apiKey: String, model: String): Result<String> = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) return@withContext Result.failure(IllegalArgumentException("Anthropic API key is required."))
+        if (apiKey.isBlank()) return@withContext Result.failure(IllegalArgumentException("Groq API key is required. (Get free key at console.groq.com/keys)"))
 
         try {
-            val url = "https://api.anthropic.com/v1/messages"
+            val url = "https://api.groq.com/openai/v1/chat/completions"
             val bodyJson = JSONObject().apply {
                 put("model", model)
-                put("max_tokens", 10)
                 val msgs = JSONArray().put(JSONObject().put("role", "user").put("content", "ping"))
                 put("messages", msgs)
+                put("max_tokens", 5)
             }
 
             val request = Request.Builder()
                 .url(url)
-                .addHeader("x-api-key", apiKey)
-                .addHeader("anthropic-version", "2023-06-01")
+                .addHeader("Authorization", "Bearer $apiKey")
                 .post(bodyJson.toString().toRequestBody(HttpClientHelper.JSON_MEDIA_TYPE))
                 .build()
 
@@ -41,11 +40,11 @@ class AnthropicProviderAdapter : AiProviderAdapter {
             if (!response.isSuccessful) {
                 val errMessage = parseErrorMessage(respBody)
                 return@withContext Result.failure(
-                    AiProviderException(response.code, "Anthropic Claude", errMessage)
+                    AiProviderException(response.code, "Groq LPU", errMessage)
                 )
             }
 
-            Result.success("Connected to Anthropic ($model) successfully.")
+            Result.success("Connected to Groq ($model) successfully with free API key.")
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -58,16 +57,18 @@ class AnthropicProviderAdapter : AiProviderAdapter {
         model: String,
         tools: List<ToolDefinition>
     ): ProviderResponse = withContext(Dispatchers.IO) {
-        val url = "https://api.anthropic.com/v1/messages"
+        val url = "https://api.groq.com/openai/v1/chat/completions"
         val bodyJson = JSONObject()
         bodyJson.put("model", model)
-        bodyJson.put("max_tokens", 4096)
-        bodyJson.put(
-            "system",
-            "You are an AI collaborator participating in a Multi-AI shared group chat workspace alongside other models (Google Gemini, OpenAI GPT, Anthropic Claude) and human users. You have real tools for managing artifacts and computing values in the app workspace. When asked to create or modify code, HTML apps, documents, or data, call 'create_file' or 'edit_file' so they are written as actual files to the workspace. When collaborating or reviewing, you can reference other agents by name, critique their proposals, and refine artifacts together."
-        )
 
         val messages = JSONArray()
+        // Multi-Agent group chat system prompt
+        messages.put(
+            JSONObject()
+                .put("role", "system")
+                .put("content", "You are an AI collaborator participating in a Multi-AI shared group chat workspace alongside other models (Google Gemini, Groq Llama, OpenRouter, OpenAI) and human users. You have real tools for managing artifacts and computing values in the app workspace. When asked to create or modify code, HTML apps, documents, or data, call 'create_file' or 'edit_file' so they are written as actual files to the workspace. When collaborating or reviewing, you can reference other agents by name, critique their proposals, and refine artifacts together.")
+        )
+
         val recentHistory = history.takeLast(20)
         recentHistory.forEach { msg ->
             val role = if (msg.sender.type == SenderType.USER) "user" else "assistant"
@@ -76,19 +77,17 @@ class AnthropicProviderAdapter : AiProviderAdapter {
             } else {
                 msg.content
             }
-            if (content.isNotBlank()) {
-                messages.put(JSONObject().put("role", role).put("content", content))
-            }
+            messages.put(JSONObject().put("role", role).put("content", content))
         }
 
         messages.put(JSONObject().put("role", "user").put("content", prompt))
         bodyJson.put("messages", messages)
 
         if (tools.isNotEmpty()) {
-            bodyJson.put("tools", ToolRegistry.toAnthropicToolsJson())
+            bodyJson.put("tools", ToolRegistry.toOpenAiToolsJson())
         }
 
-        executeAnthropicCall(url, bodyJson, apiKey, model)
+        executeGroqCall(url, bodyJson, apiKey, model)
     }
 
     override suspend fun sendToolResult(
@@ -100,52 +99,46 @@ class AnthropicProviderAdapter : AiProviderAdapter {
         model: String,
         tools: List<ToolDefinition>
     ): ProviderResponse = withContext(Dispatchers.IO) {
-        val url = "https://api.anthropic.com/v1/messages"
+        val url = "https://api.groq.com/openai/v1/chat/completions"
         val bodyJson = JSONObject()
         bodyJson.put("model", model)
-        bodyJson.put("max_tokens", 4096)
 
         val messages = JSONArray()
         val recentHistory = history.takeLast(15)
         recentHistory.forEach { msg ->
             val role = if (msg.sender.type == SenderType.USER) "user" else "assistant"
-            if (msg.content.isNotBlank()) {
-                messages.put(JSONObject().put("role", role).put("content", msg.content))
-            }
+            messages.put(JSONObject().put("role", role).put("content", msg.content))
         }
 
-        // Assistant tool_use block
-        val assistantContent = JSONArray().put(
-            JSONObject()
-                .put("type", "tool_use")
-                .put("id", toolCallId)
-                .put("name", toolName)
-                .put("input", JSONObject())
+        val assistantCall = JSONObject().put("role", "assistant").put("content", JSONObject.NULL)
+        val toolCallsArr = JSONArray().put(
+            JSONObject().put("id", toolCallId).put("type", "function").put(
+                "function",
+                JSONObject().put("name", toolName).put("arguments", "{}")
+            )
         )
-        messages.put(JSONObject().put("role", "assistant").put("content", assistantContent))
+        assistantCall.put("tool_calls", toolCallsArr)
+        messages.put(assistantCall)
 
-        // User tool_result block
-        val userContent = JSONArray().put(
-            JSONObject()
-                .put("type", "tool_result")
-                .put("tool_use_id", toolCallId)
-                .put("content", toolResult)
-        )
-        messages.put(JSONObject().put("role", "user").put("content", userContent))
+        val toolMsg = JSONObject().apply {
+            put("role", "tool")
+            put("tool_call_id", toolCallId)
+            put("content", toolResult)
+        }
+        messages.put(toolMsg)
         bodyJson.put("messages", messages)
 
         if (tools.isNotEmpty()) {
-            bodyJson.put("tools", ToolRegistry.toAnthropicToolsJson())
+            bodyJson.put("tools", ToolRegistry.toOpenAiToolsJson())
         }
 
-        executeAnthropicCall(url, bodyJson, apiKey, model)
+        executeGroqCall(url, bodyJson, apiKey, model)
     }
 
-    private fun executeAnthropicCall(url: String, bodyJson: JSONObject, apiKey: String, model: String): ProviderResponse {
+    private fun executeGroqCall(url: String, bodyJson: JSONObject, apiKey: String, model: String): ProviderResponse {
         val request = Request.Builder()
             .url(url)
-            .addHeader("x-api-key", apiKey)
-            .addHeader("anthropic-version", "2023-06-01")
+            .addHeader("Authorization", "Bearer $apiKey")
             .post(bodyJson.toString().toRequestBody(HttpClientHelper.JSON_MEDIA_TYPE))
             .build()
 
@@ -154,27 +147,30 @@ class AnthropicProviderAdapter : AiProviderAdapter {
 
         if (!response.isSuccessful) {
             val errMessage = parseErrorMessage(respBody)
-            throw AiProviderException(response.code, "Anthropic Claude", errMessage)
+            throw AiProviderException(response.code, "Groq LPU", errMessage)
         }
 
         val json = JSONObject(respBody)
-        val contentArray = json.optJSONArray("content")
-            ?: throw IOException("No content returned from Anthropic")
+        val choices = json.optJSONArray("choices")
+            ?: throw IOException("No choices returned from Groq")
+        val choice = choices.getJSONObject(0)
+        val msgObj = choice.getJSONObject("message")
+        val text = msgObj.optString("content", "")
 
-        val textBuilder = StringBuilder()
         val toolCalls = mutableListOf<ToolExecutionRequest>()
-
-        for (i in 0 until contentArray.length()) {
-            val block = contentArray.getJSONObject(i)
-            val type = block.optString("type")
-            if (type == "text") {
-                textBuilder.append(block.optString("text"))
-            } else if (type == "tool_use") {
-                val id = block.optString("id")
-                val name = block.optString("name")
-                val inputObj = block.optJSONObject("input") ?: JSONObject()
+        val toolCallsJson = msgObj.optJSONArray("tool_calls")
+        if (toolCallsJson != null) {
+            for (i in 0 until toolCallsJson.length()) {
+                val tc = toolCallsJson.getJSONObject(i)
+                val id = tc.optString("id", java.util.UUID.randomUUID().toString())
+                val funcObj = tc.getJSONObject("function")
+                val name = funcObj.getString("name")
+                val argsString = funcObj.optString("arguments", "{}")
                 val argsMap = mutableMapOf<String, Any?>()
-                inputObj.keys().forEach { k -> argsMap[k] = inputObj.get(k) }
+                try {
+                    val parsedArgs = JSONObject(argsString)
+                    parsedArgs.keys().forEach { k -> argsMap[k] = parsedArgs.get(k) }
+                } catch (_: Exception) {}
 
                 val toolDef = ToolRegistry.TOOLS.find { it.name == name }
                 toolCalls.add(
@@ -189,16 +185,14 @@ class AnthropicProviderAdapter : AiProviderAdapter {
         }
 
         val usage = json.optJSONObject("usage")
-        val inputTokens = usage?.optInt("input_tokens") ?: 0
-        val outputTokens = usage?.optInt("output_tokens") ?: 0
         val tokenUsage = TokenUsage(
-            promptTokens = inputTokens,
-            completionTokens = outputTokens,
-            totalTokens = inputTokens + outputTokens
+            promptTokens = usage?.optInt("prompt_tokens") ?: 0,
+            completionTokens = usage?.optInt("completion_tokens") ?: 0,
+            totalTokens = usage?.optInt("total_tokens") ?: 0
         )
 
         return ProviderResponse(
-            text = textBuilder.toString(),
+            text = text,
             toolCalls = toolCalls,
             tokenUsage = tokenUsage,
             modelUsed = model

@@ -224,12 +224,12 @@ class ToolExecutor(private val fileManager: WorkspaceFileManager) {
                 }
 
                 "preview_diff" -> {
-                    val path = args["path"] as? String
-                        ?: return ToolExecutionResult(request.callId, request.toolName, false, "", "Missing 'path'")
+                    val path = (args["path"] as? String) ?: "workspace_file"
                     val newContent = args["new_content"] as? String
                         ?: return ToolExecutionResult(request.callId, request.toolName, false, "", "Missing 'new_content'")
 
-                    val oldContent = try { fileManager.readFile(path) } catch (_: Exception) { "" }
+                    val oldContent = (args["old_content"] as? String)
+                        ?: try { fileManager.readFile(path) } catch (_: Exception) { "" }
                     val diff = DiffEngine.formatUnifiedDiff(path, oldContent, newContent)
                     val output = JSONObject()
                         .put("path", path)

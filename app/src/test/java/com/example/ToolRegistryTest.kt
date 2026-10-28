@@ -45,11 +45,18 @@ class ToolRegistryTest {
     }
 
     @Test
-    fun testAnthropicSerialization() {
-        val json = ToolRegistry.toAnthropicToolsJson()
+    fun testGroqAndOpenRouterToolCompatibility() {
+        // Groq and OpenRouter use OpenAI-compatible tool calling schemas
+        val json = ToolRegistry.toOpenAiToolsJson()
         assertNotNull(json)
         assertEquals(ToolRegistry.TOOLS.size, json.length())
-        val first = json.getJSONObject(0)
-        assertTrue(first.has("input_schema"))
+        for (i in 0 until json.length()) {
+            val tool = json.getJSONObject(i)
+            assertEquals("function", tool.getString("type"))
+            val function = tool.getJSONObject("function")
+            assertTrue(function.has("name"))
+            assertTrue(function.has("description"))
+            assertTrue(function.has("parameters"))
+        }
     }
 }
